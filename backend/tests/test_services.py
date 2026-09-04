@@ -12,7 +12,7 @@ from src.config import MAX_UPLOAD_SIZE
 from src.models import StoredFile
 from src.services import FileService
 from src.storage import UploadNotFoundError
-from tests.conftest import S3_MIN_PART, make_big_part_storage
+from tests.conftest import S3_MIN_PART, make_big_part_storage, upload_all_parts
 
 
 class FakeSession:
@@ -53,25 +53,6 @@ def make_service(storage, file_repo=None) -> FileService:
         file_repo=file_repo or FakeFileRepo(),
         alert_repo=FakeAlertRepo(),
     )
-
-
-def upload_all_parts(storage, key, upload_id, data, part_size):
-    """Upload ``data`` via the boto3 multipart API — mirrors the browser PUT."""
-    parts = []
-    offset, number = 0, 1
-    while offset < len(data):
-        chunk = data[offset : offset + part_size]
-        response = storage._client.upload_part(
-            Bucket=storage.bucket,
-            Key=key,
-            UploadId=upload_id,
-            PartNumber=number,
-            Body=chunk,
-        )
-        parts.append({"PartNumber": number, "ETag": response["ETag"]})
-        offset += len(chunk)
-        number += 1
-    return parts
 
 
 async def test_initiate_upload_creates_pending_file(s3):
@@ -185,7 +166,7 @@ async def test_complete_upload_marks_file_uploaded(s3):
     assert item.processing_status == "uploaded"
     assert item.upload_id is None
     # Object is fully assembled in S3.
-    assert big.iter_object(init["stored_name"])["Body"].read() == data
+    assert big.open_stream(init["stored_name"]).stream.read() == data
 
 
 async def test_complete_upload_missing_parts_is_rejected(s3):
@@ -231,7 +212,7 @@ async def test_delete_file_removes_object_and_row(s3):
     await service.delete_file(FakeSession(), init["file_id"])
     assert init["file_id"] not in repo.files
     with pytest.raises(UploadNotFoundError):
-        big.iter_object(init["stored_name"])
+        big.open_stream(init["stored_name"])
 
 
 async def test_download_returns_streaming_body(s3):
@@ -248,4 +229,4 @@ async def test_download_returns_streaming_body(s3):
 
     item, body = await service.download(FakeSession(), init["file_id"])
     assert item.id == init["file_id"]
-    assert body["Body"].read() == b"hello"
+    assert body.stream.read() == b"hello"

@@ -10,28 +10,7 @@ minimum legal chunk size (5 MiB); moto enforces it exactly like MinIO do.
 import pytest
 
 from src.storage import S3StorageService, UploadNotFoundError
-from tests.conftest import S3_MIN_PART, make_big_part_storage
-
-
-def upload_all_parts(
-    storage: S3StorageService, key: str, upload_id: str, data: bytes, part_size: int
-) -> list[dict]:
-    """Upload ``data`` via the boto3 multipart API — mirrors the browser PUT."""
-    parts: list[dict] = []
-    offset, number = 0, 1
-    while offset < len(data):
-        chunk = data[offset : offset + part_size]
-        response = storage._client.upload_part(
-            Bucket=storage.bucket,
-            Key=key,
-            UploadId=upload_id,
-            PartNumber=number,
-            Body=chunk,
-        )
-        parts.append({"PartNumber": number, "ETag": response["ETag"]})
-        offset += len(chunk)
-        number += 1
-    return parts
+from tests.conftest import S3_MIN_PART, make_big_part_storage, upload_all_parts
 
 
 def test_create_multipart_upload_returns_upload_id(s3):
@@ -87,7 +66,7 @@ def test_delete_removes_object(s3):
     big.delete(key)
 
     with pytest.raises(UploadNotFoundError):
-        big.iter_object(key)
+        big.open_stream(key)
 
 
 def test_download_to_path_missing_object_raises(s3, tmp_path):

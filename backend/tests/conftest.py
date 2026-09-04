@@ -70,6 +70,8 @@ S3_MIN_PART = 5 * 1024 * 1024  # 5 MiB
 
 def make_big_part_storage(s3: S3StorageService) -> S3StorageService:
 
+
+
     """Make a sibling service with a legal multipart part size, sharing the moto
     server the ``s3`` fixture points at (its env vars are still live)."""
 
@@ -83,3 +85,24 @@ def make_big_part_storage(s3: S3StorageService) -> S3StorageService:
         else:
             os.environ["S3_PART_SIZE"] = old
     return storage
+
+
+def upload_all_parts(
+    storage: S3StorageService, key: str, upload_id: str, data: bytes, part_size: int
+) -> list[dict]:
+    """Upload ``data`` via the real boto3 multipart API — mirrors the browser PUT."""
+    parts: list[dict] = []
+    offset, number = 0, 1
+    while offset < len(data):
+        chunk = data[offset : offset + part_size]
+        response = storage._client.upload_part(
+            Bucket=storage.bucket,
+            Key=key,
+            UploadId=upload_id,
+            PartNumber=number,
+            Body=chunk,
+        )
+        parts.append({"PartNumber": number, "ETag": response["ETag"]})
+        offset += len(chunk)
+        number += 1
+    return parts

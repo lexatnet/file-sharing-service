@@ -11,6 +11,9 @@ endpoint the browser can reach (``localhost:9000``). Presigning does not make a
 network call, so the two endpoints stay distinct.
 """
 
+from dataclasses import dataclass
+from typing import Any
+
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -28,6 +31,23 @@ class FileTooLargeError(StorageError):
 
 class UploadNotFoundError(StorageError):
     """Raised when a multipart upload or stored object does not exist."""
+
+
+@dataclass
+class S3Object:
+    """Typed view over a boto3 ``get_object`` response.
+
+
+
+    The HTTP layer streams ``stream`` without touching the raw dict, keeping the
+    knowledge of boto3's response shape in a single place..
+    """
+    _response: dict
+
+    @property
+    def stream(self) -> Any:
+        """File-like stream of the object's body (a boto3 ``StreamingBody``)."""
+        return self._response["Body"]
 
 
 class S3StorageService:
@@ -154,13 +174,13 @@ class S3StorageService:
         except ClientError as exc:
             raise UploadNotFoundError(f"Stored object {key} not found") from exc
 
-    def iter_object(self, key: str) -> dict:
-        """Return the ``get_object`` response for streaming a download.
+    def open_stream(self, key: str) -> S3Object:
+        """Return a typed body stream for downloading an object..
 
-        The caller iterates ``response["Body"]``; keys/values kept close to the
-        boto3 response so the HTTP layer can stream without buffering.
+        The caller streams ``stream`` (a boto3 ``StreamingBody``) so the
+        HTTP layer never buffers the object in memory..
         """
         try:
-            return self._client.get_object(Bucket=self.bucket, Key=key)
+            return S3Object(self._client.get_object(Bucket=self.bucket, Key=key))
         except ClientError as exc:
             raise UploadNotFoundError(f"Stored object {key} not found") from exc

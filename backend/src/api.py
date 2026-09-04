@@ -124,7 +124,7 @@ async def download_file_view(
 ):
     file_item, body = await _file_service.download(session, file_id)
     return StreamingResponse(
-        body["Body"],
+        body.stream,
         media_type=file_item.mime_type,
         headers={"Content-Disposition": FileService.download_name(file_item)},
     )

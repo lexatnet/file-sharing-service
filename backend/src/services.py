@@ -10,6 +10,7 @@ transaction spans the whole operation.
 """
 
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -19,6 +20,7 @@ from src.config import MAX_UPLOAD_SIZE
 from src.models import Alert, StoredFile
 from src.repositories import AlertRepository, FileRepository
 from src.storage import (
+    S3Object,
     S3StorageService,
     StorageError,
     UploadNotFoundError,
@@ -30,9 +32,18 @@ _MIN_PART_NUMBER = 1
 
 def _freeform_filename(name: str) -> str:
     """URL-encode unsafe characters for a ``filename*=`` content-disposition."""
-    from urllib.parse import quote
-
     return quote(name)
+
+
+def _validate_title(title: str) -> str:
+    """Strip and reject a blank title — shared by create/update paths."""
+    title = title.strip()
+    if not title:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Title must not be empty",
+        )
+    return title
 
 
 class FileService:
@@ -81,12 +92,7 @@ class FileService:
         resumable (the UploadId persists across restarts) yet never requeued by
         the startup sweep (which only targets ``uploaded``/``processing``).
         """
-        title = title.strip()
-        if not title:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Title must not be empty",
-            )
+        title = _validate_title(title)
         if size <= 0:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -181,7 +187,7 @@ class FileService:
         except StorageError as exc:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Could not complete the multipart upload",
+                detail=f"Could not complete the multipart upload: {exc}",
             ) from exc
 
         file_item.upload_id = None
@@ -218,12 +224,7 @@ class FileService:
     async def update_file(
         self, session: AsyncSession, file_id: str, title: str
     ) -> StoredFile:
-        title = title.strip()
-        if not title:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Title must not be empty",
-            )
+        title = _validate_title(title)
         file_item = await self.get_file(session, file_id)
         return await self.file_repo.update_title(session, file_item, title)
 
@@ -237,11 +238,11 @@ class FileService:
 
     async def download(
         self, session: AsyncSession, file_id: str
-    ) -> tuple[StoredFile, object]:
-        """Resolve a stored file to its S3 ``get_object`` response, or 404."""
+    ) -> tuple[StoredFile, S3Object]:
+        """Resolve a stored file to its S3 body stream, or 404."""
         file_item = await self.get_file(session, file_id)
         try:
-            body = self.storage.iter_object(file_item.stored_name)
+            body = self.storage.open_stream(file_item.stored_name)
         except UploadNotFoundError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

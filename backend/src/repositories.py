@@ -37,7 +37,7 @@ class FileRepository:
         stored_name: str,
         mime_type: str,
         size: int,
-        processing_status: str = "uploaded",
+        processing_status: str,
         upload_id: str | None = None,
     ) -> StoredFile:
         file_item = StoredFile(
@@ -75,17 +75,3 @@ class AlertRepository:
             select(Alert).order_by(Alert.created_at.desc())
         )
         return list(result.scalars().all())
-
-    async def create(
-        self,
-        session: AsyncSession,
-        *,
-        file_id: str,
-        level: str,
-        message: str,
-    ) -> Alert:
-        alert = Alert(file_id=file_id, level=level, message=message)
-        session.add(alert)
-        await session.commit()
-        await session.refresh(alert)
-        return alert
