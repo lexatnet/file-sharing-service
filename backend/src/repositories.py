@@ -38,6 +38,7 @@ class FileRepository:
         mime_type: str,
         size: int,
         processing_status: str = "uploaded",
+        upload_id: str | None = None,
     ) -> StoredFile:
         file_item = StoredFile(
             id=id,
@@ -47,6 +48,7 @@ class FileRepository:
             mime_type=mime_type,
             size=size,
             processing_status=processing_status,
+            upload_id=upload_id,
         )
         session.add(file_item)
         await session.commit()

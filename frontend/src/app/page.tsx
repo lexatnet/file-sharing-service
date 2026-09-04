@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Badge,
@@ -23,8 +23,10 @@ export default function Page() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -45,18 +47,39 @@ export default function Page() {
     void loadData();
   }, [loadData]);
 
+  function handleModalHide() {
+    if (isSubmitting) {
+      // Cancelling mid-upload aborts the current chunked upload instead of
+      // just hiding the dialog (which would leave the multipart hanging).
+      abortRef.current?.abort();
+    } else {
+      setShowModal(false);
+    }
+  }
+
   async function handleUpload(title: string, file: File) {
     setIsSubmitting(true);
+    setUploadProgress(0);
     setErrorMessage(null);
 
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      await uploadFile(title, file);
+      await uploadFile(title, file, {
+        onProgress: setUploadProgress,
+        signal: controller.signal,
+      });
       setShowModal(false);
       await loadData();
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Произошла ошибка");
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        setErrorMessage(error instanceof Error ? error.message : "Произошла ошибка");
+      }
     } finally {
+      abortRef.current = null;
       setIsSubmitting(false);
+      setUploadProgress(null);
     }
   }
 
@@ -120,7 +143,8 @@ export default function Page() {
       <UploadModal
         show={showModal}
         isSubmitting={isSubmitting}
-        onHide={() => setShowModal(false)}
+        progress={uploadProgress}
+        onHide={handleModalHide}
         onSubmit={handleUpload}
       />
     </Container>

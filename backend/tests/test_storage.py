@@ -1,80 +1,103 @@
-"""StorageService: streaming save, size cap, and path-traversal guard."""
+"""S3StorageService: multipart lifecycle, presigning, whole-object operations.
+
+Parts are uploaded through the real boto3 multipart API (moto emulates S3);
+the presigned-URL helper is checked structurally since no live MinIO runs in
+unit tests. The full-flow tests (the ones that call ``complete``) use the S3
+minimum legal chunk size (5 MiB); moto enforces it exactly like MinIO do.
+
+"""
 
 import pytest
 
-from src.storage import FileTooLargeError, StorageError, StorageService
+from src.storage import S3StorageService, UploadNotFoundError
+from tests.conftest import S3_MIN_PART, make_big_part_storage
 
 
-class FakeUpload:
-    """Minimal async upload stand-in: iterates over preset byte chunks."""
-
-    def __init__(self, chunks: list[bytes], content_type: str = "application/octet-stream"):
-        self.chunks = chunks
-        self.content_type = content_type
-
-    async def read(self, size: int = -1) -> bytes:
-        if self.chunks:
-            return self.chunks.pop(0)
-        return b""
-
-
-@pytest.fixture
-def upload() -> FakeUpload:
-    return FakeUpload([b"hello", b" world"])
-
-
-async def test_save_streams_bytes_and_reports_size_mime(storage, upload):
-    size, mime = await storage.save(upload, "abc.txt")
-    assert size == len(b"hello world")
-    assert mime == "application/octet-stream"
-    assert (storage.storage_dir / "abc.txt").read_bytes() == b"hello world"
+def upload_all_parts(
+    storage: S3StorageService, key: str, upload_id: str, data: bytes, part_size: int
+) -> list[dict]:
+    """Upload ``data`` via the boto3 multipart API — mirrors the browser PUT."""
+    parts: list[dict] = []
+    offset, number = 0, 1
+    while offset < len(data):
+        chunk = data[offset : offset + part_size]
+        response = storage._client.upload_part(
+            Bucket=storage.bucket,
+            Key=key,
+            UploadId=upload_id,
+            PartNumber=number,
+            Body=chunk,
+        )
+        parts.append({"PartNumber": number, "ETag": response["ETag"]})
+        offset += len(chunk)
+        number += 1
+    return parts
 
 
-async def test_save_defaults_mime_from_extension(storage):
-    upload = FakeUpload([b"data"], content_type=None)
-    size, mime = await storage.save(upload, "report.pdf")
-    assert mime == "application/pdf"
+def test_create_multipart_upload_returns_upload_id(s3):
+    upload_id = s3.create_multipart_upload("abc.txt")
+    assert isinstance(upload_id, str) and upload_id
 
 
-async def test_save_rejects_oversized_upload_and_cleans_up(storage):
-    # First chunk lands exactly on the cap, the second pushes past it.
-    upload = FakeUpload([b"0123456789", b"1"], content_type=None)
-    with pytest.raises(FileTooLargeError):
-        await storage.save(upload, "big.bin", max_size=10)
-    assert not (storage.storage_dir / "big.bin").exists()
+def test_presign_upload_part_returns_signed_put_url(s3):
+    upload_id = s3.create_multipart_upload("path/file.bin")
+    url = s3.presign_upload_part("path/file.bin", upload_id, 3)
+    assert "X-Amz-Signature=" in url
+    assert "partNumber=3" in url
+    assert "uploadId=" in url
 
 
-async def test_save_accepts_upload_at_exact_limit(storage, tmp_path):
-    upload = FakeUpload([b"0123456789"], content_type=None)
-    size, _ = await storage.save(upload, "ok.bin", max_size=10)
-    assert size == 10
-    assert (storage.storage_dir / "ok.bin").read_bytes() == b"0123456789"
+def test_list_parts_reports_uploaded_part_numbers(s3):
+    key = "a.bin"
+    upload_id = s3.create_multipart_upload(key)
+    upload_all_parts(s3, key, upload_id, b"0123456789", 5)
+    assert s3.uploaded_part_numbers(key, upload_id) == {1, 2}
 
 
-async def test_delete_removes_file(storage):
-    (storage.storage_dir / "gone.txt").write_text("x")
-    storage.delete("gone.txt")
-    assert not (storage.storage_dir / "gone.txt").exists()
+def test_complete_multipart_upload_assembles_object(s3, tmp_path):
+    big = make_big_part_storage(s3)
+    key = "doc.pdf"
+    upload_id = big.create_multipart_upload(key)
+    data = b"a" * S3_MIN_PART + b"tail"
+    parts = upload_all_parts(big, key, upload_id, data, S3_MIN_PART)
+    big.complete_multipart_upload(key, upload_id, parts)
+
+    dest = tmp_path / "out.pdf"
+    big.download_to_path(key, str(dest))
+    assert dest.read_bytes() == data
 
 
-async def test_delete_missing_file_is_noop(storage):
-    storage.delete("never-existed.txt")
+def test_abort_multipart_upload_throws_upload_not_found(s3):
+    key = "abandoned.bin"
+    upload_id = s3.create_multipart_upload(key)
+    upload_all_parts(s3, key, upload_id, b"data", 4)
+    s3.abort_multipart_upload(key, upload_id)
+
+    with pytest.raises(UploadNotFoundError):
+        s3.list_parts(key, upload_id)
 
 
-def test_resolve_rejects_path_traversal(storage):
-    with pytest.raises(StorageError):
-        storage.resolve("../outside.txt")
-    with pytest.raises(StorageError):
-        storage.resolve("sub/../../outside.txt")
+def test_delete_removes_object(s3):
+    big = make_big_part_storage(s3)
+    key = "gone.txt"
+    upload_id = big.create_multipart_upload(key)
+    parts = upload_all_parts(big, key, upload_id, b"x" * S3_MIN_PART, S3_MIN_PART)
+    big.complete_multipart_upload(key, upload_id, parts)
+
+    big.delete(key)
+
+    with pytest.raises(UploadNotFoundError):
+        big.iter_object(key)
 
 
-def test_resolve_allows_nested_names(storage):
-    nested = storage.storage_dir / "sub"
-    nested.mkdir()
-    assert storage.resolve("sub/nested.txt") == (nested / "nested.txt").resolve()
+def test_download_to_path_missing_object_raises(s3, tmp_path):
+    with pytest.raises(UploadNotFoundError):
+        s3.download_to_path("does-not-exist.txt", str(tmp_path / "x"))
 
 
-def test_constructor_creates_directory(tmp_path):
-    target = tmp_path / "brand" / "new"
-    StorageService(target)
-    assert target.is_dir()
+def test_num_parts_for_size(s3):
+    assert s3.num_parts_for(0) == 0
+    assert s3.num_parts_for(1) == 1
+    assert s3.num_parts_for(s3.part_size) == 1
+    assert s3.num_parts_for(s3.part_size + 1) == 2
+    assert s3.num_parts_for(3 * s3.part_size) == 3

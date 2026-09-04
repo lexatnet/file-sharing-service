@@ -15,6 +15,10 @@ class StoredFile(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # Active S3 multipart UploadId while the file is being uploaded; cleared
+    # (set to None) once the upload completes. Nullable so completed files are
+    # unaffected.
+    upload_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size: Mapped[int] = mapped_column(Integer, nullable=False)
     processing_status: Mapped[str] = mapped_column(String(50), nullable=False, default="uploaded")

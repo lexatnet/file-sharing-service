@@ -14,6 +14,8 @@ in progress". Storage is shared via ``src.storage``.
 import asyncio
 import logging
 import os
+import tempfile
+from pathlib import Path
 
 from celery import Celery
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +27,7 @@ from src.migration import run_migrations
 from src.models import Alert, StoredFile
 from src.repositories import FileRepository
 from src.scanner import scan_file
-from src.storage import StorageService
+from src.storage import S3StorageService, UploadNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +99,7 @@ def requeue_incomplete_periodic() -> None:
     asyncio.run(_requeue_incomplete_periodic())
 
 
-_storage = StorageService(settings.storage_dir)
+_storage = S3StorageService(settings)
 
 
 async def _scan_file_for_threats(file_id: str) -> None:
@@ -126,8 +128,25 @@ async def _extract_file_metadata(file_id: str) -> None:
 
 
 
-        stored_path = _storage.path_for(file_item.stored_name)
-        if not stored_path.exists():
+        try:
+            # The worker reads real S3 objects (unlike the API, which streams
+            # them). Pull the object to a temp file for extract_metadata, which
+            # works on a path; the temp file is removed right after.
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                suffix=Path(file_item.original_name).suffix
+            )
+            os.close(tmp_fd)  # download_file opens it itself; keep fd-free on Windows-safe path
+            try:
+                _storage.download_to_path(file_item.stored_name, tmp_path)
+                file_item.metadata_json = extract_metadata(
+                    Path(tmp_path),
+                    file_item.original_name,
+                    file_item.mime_type,
+                    file_item.size,
+                )
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+        except UploadNotFoundError:
             file_item.processing_status = "failed"
             file_item.scan_status = file_item.scan_status or "failed"
             file_item.scan_details = "stored file not found during metadata extraction"
@@ -135,11 +154,6 @@ async def _extract_file_metadata(file_id: str) -> None:
             send_file_alert.delay(file_id)
             return
 
-
-
-        file_item.metadata_json = extract_metadata(
-            stored_path, file_item.original_name, file_item.mime_type, file_item.size
-        )
         file_item.processing_status = "processed"
         await session.commit()
 

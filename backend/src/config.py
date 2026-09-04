@@ -39,10 +39,28 @@ class Settings:
             or _DEFAULT_REDIS_URL
         )
 
-        # Local file storage. Defaults to /data/files (a dedicated volume mount
-        # in docker-compose), keeping uploads out of the code directory.
-        self.storage_dir: Path = Path(
-            os.environ.get("STORAGE_DIR", "/data/files")
+        # S3 (MinIO) file storage. Uploaded files live in the bucket; the app
+        # authenticates as the SERVICE_S3_FILES_CLIENT_* user created by the
+        # s3_init service in docker-compose.
+        self.s3_endpoint_url: str = os.environ.get("S3_ENDPOINT_URL", "http://s3:9000")
+        # Endpoint embedded into presigned URLs handed to the browser. Distinct
+        # from s3_endpoint_url because inside the compose network MinIO answers
+        # at http://s3:9000 while the browser reaches it via http://localhost:9000.
+        self.s3_public_endpoint: str = os.environ.get(
+            "S3_PUBLIC_ENDPOINT", "http://localhost:9000"
+        )
+        self.s3_region: str = os.environ.get("SERVICE_S3_FILES_REGION", "ru-1")
+        self.s3_bucket: str = os.environ.get("SERVICE_S3_FILES_BUCKET", "test-bucket")
+        self.s3_access_key: str = os.environ.get(
+            "SERVICE_S3_FILES_CLIENT_ID", "minio-client"
+        )
+        self.s3_secret_key: str = os.environ.get(
+            "SERVICE_S3_FILES_CLIENT_SECRET", "minio-client-secret"
+        )
+        # Default chunk size for multipart uploads (S3 minimum is 5 MB except
+        # for the last part). Tunable via env.
+        self.s3_part_size: int = int(
+            os.environ.get("S3_PART_SIZE", str(8 * 1024 * 1024))
         )
 
         # CORS origins for the API (frontend runs on :3000 under /test).
