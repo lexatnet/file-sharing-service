@@ -89,6 +89,7 @@ uv run pytest -q
   - Воркер: metadata-extraction качает объект из S3 во временный файл.
   - Фронтенд: чанкованная загрузка по presigned-URL с прогрессом, «Отмена» (AbortController), возобновление прерванной из localStorage (с пропуском уже залитых частей).
   - Compose: depends_on: s3 у backend/worker/beat, убраны старые volume uploaded-files
+
 - **`e87baf1` Refactoring** —
   - Мёртвый AlertRepository.create — удалён из repositories.py (воркер и так ходит напрямую через session.add).
   - Дублированная валидация title — вынесен общий хелпер _validate_title() в services.py; используется в initiate_upload и update_file..
@@ -96,6 +97,7 @@ uv run pytest -q
   - Import внутри функции — from urllib.parse import quote перенесён наверх модуля.
   - upload_all_parts — вынесен из двух тестовых файлов в общий tests/conftest.py.
   - Потеря причины S3-ошибки при complete — services.complete_upload теперь пробрасывает Code (detail …Could not complete…: ENTITY_TOO_SMALL и т.п.
+
 - **`8ed7eec` events subscription** —
   - Бэкенд:
     - backend/src/events.py (новый) — пул событий:
