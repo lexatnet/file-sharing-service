@@ -148,6 +148,45 @@ export function getDownloadUrl(fileId: string): string {
   return `${API_BASE}/files/${fileId}/download`;
 }
 
+export type FileEventType = "file_created" | "file_processed" | "alert_created";
+
+export type FileEvent = {
+  type: FileEventType;
+  file_id: string;
+};
+
+export type FileEventHandle = {
+  close: () => void;
+};
+
+/**
+ * SSE subscription to backend file-processing events. The server relays worker
+ * events (file created / processed, alert created) here; the caller re-fetches
+ * the REST lists on receipt. Returns a handle whose ``close()`` tears the
+ * connection down (EventSource auto-reconnects on drops by itself).
+ */
+export function subscribeFileEvents(
+  onEvent: (event: FileEvent) => void,
+): FileEventHandle | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const source = new EventSource(`${API_BASE}/events`, { withCredentials: true });
+  source.addEventListener("file_event", (event) => {
+    try {
+      const payload = JSON.parse((event as MessageEvent).data) as FileEvent;
+      onEvent(payload);
+    } catch {
+      /* malformed frame — ignore */
+    }
+  });
+
+  return {
+    close: () => source.close(),
+  };
+}
+
 /**
  * Chunked, resumable upload: initialize a multipart upload, PUT the chunks to
  * S3, complete it. If a pending upload for the same file (name+size) exists,

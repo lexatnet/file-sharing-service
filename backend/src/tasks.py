@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.db import worker_session_maker
+from src.events import publish_event
 from src.metadata import extract_metadata
 from src.migration import run_migrations
 from src.models import Alert, StoredFile
@@ -151,13 +152,21 @@ async def _extract_file_metadata(file_id: str) -> None:
             file_item.scan_status = file_item.scan_status or "failed"
             file_item.scan_details = "stored file not found during metadata extraction"
             await session.commit()
+            await _notify_processed(file_id)
             send_file_alert.delay(file_id)
             return
 
         file_item.processing_status = "processed"
         await session.commit()
 
+    # Processing finished (or failed): the file table changed — notify clients.
+    await _notify_processed(file_id)
     send_file_alert.delay(file_id)
+
+
+async def _notify_processed(file_id: str) -> None:
+    """Broadcast that a file's processing finished — on success or on failure."""
+    await publish_event("file_processed", file_id)
 
 
 async def _send_file_alert(file_id: str) -> None:
@@ -181,6 +190,9 @@ async def _send_file_alert(file_id: str) -> None:
 
         session.add(alert)
         await session.commit()
+
+    # A new alert was created — notify connected clients.
+    await publish_event("alert_created", file_id)
 
 
 

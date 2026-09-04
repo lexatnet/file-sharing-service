@@ -1,7 +1,7 @@
 """HTTP layer. Thin views that parse/validate requests, delegate to the
 service layer, and shape responses. No business logic or storage/DB access."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from starlette import status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +19,7 @@ from src.schemas import (
     UploadInitRequest,
     UploadInitResponse,
 )
+from src.events import publish_event, stream_event_source
 from src.services import FileService
 from src.storage import S3StorageService
 from src.tasks import scan_file_for_threats
@@ -89,6 +90,8 @@ async def complete_upload_view(
 ):
     file_item = await _file_service.complete_upload(session, file_id)
     scan_file_for_threats.delay(file_item.id)
+    # A new file just appeared in the list — notify connected clients.
+    await publish_event("file_created", file_item.id)
     return file_item
 
 
@@ -97,6 +100,20 @@ async def abort_upload_view(
     file_id: str, session: AsyncSession = Depends(get_session)
 ):
     await _file_service.abort_upload(session, file_id)
+
+
+@router.get("/events")
+async def events_view(request: Request):
+    """SSE stream: relays file-processing events from the worker to the browser."""
+    return StreamingResponse(
+        stream_event_source(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # --- file CRUD ---------------------------------------------------------------

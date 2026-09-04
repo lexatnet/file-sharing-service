@@ -15,7 +15,7 @@ import AlertsTable from "@/components/AlertsTable";
 import FilesTable from "@/components/FilesTable";
 import Header from "@/components/Header";
 import UploadModal from "@/components/UploadModal";
-import { getAlerts, getFiles, uploadFile } from "@/lib/api";
+import { getAlerts, getFiles, subscribeFileEvents, uploadFile } from "@/lib/api";
 import type { AlertItem, FileItem } from "@/types";
 
 export default function Page() {
@@ -45,6 +45,14 @@ export default function Page() {
 
   useEffect(() => {
     void loadData();
+
+    // Live-update the tables when the worker reports a file was created,
+    // finished processing, or produced a new alert. We just re-fetch the
+    // lists from the source of truth rather than patching the local state.
+    const events = subscribeFileEvents(() => {
+      void loadData();
+    });
+    return () => events?.close();
   }, [loadData]);
 
   function handleModalHide() {
