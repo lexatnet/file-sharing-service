@@ -73,16 +73,14 @@ uv run pytest -q
   - миграции на ondelete-cascade для `alerts`;
   - загруженные файлы вынесены из кода на отдельный volume (`uploaded-files` → `/data/files`) (настройка через `STORAGE_DIR` вынесена в конфиг).
 
-
 - **`5bd47a4` Periodic re-checking in case of worker failure/task loss** —
   периодическая перепроверка незавершённых файлов, независимо от рестартов:
-
   - Celery **beat** публикует `requeue_incomplete_periodic` по расписанию
     (по умолчанию раз в 5 минут; регулируется env `REQUEUE_INTERVAL_SECONDS`;
   - новый сервис **`backend-beat`** в `docker-compose.dev.yml` и `docker-compose.prod.yml`;
   - `celerybeat-schedule` (SQLite-состояние расписания** вынесен на volume `/data`
     (вне кода; в `.gitignore` добавлено правило `celerybeat-schedule*`.`
-  
+
 - **`777cb1d` new file upload/downlod with s3** —
   - Бэкенд: S3StorageService (boto3: create_multipart_upload → presign-URL → complete/abort/list_parts)
   - колонка upload_id в БД + миграция
@@ -98,3 +96,16 @@ uv run pytest -q
   - Import внутри функции — from urllib.parse import quote перенесён наверх модуля.
   - upload_all_parts — вынесен из двух тестовых файлов в общий tests/conftest.py.
   - Потеря причины S3-ошибки при complete — services.complete_upload теперь пробрасывает Code (detail …Could not complete…: ENTITY_TOO_SMALL и т.п.
+- **`8ed7eec` events subscription** —
+  - Бэкенд:
+    - backend/src/events.py (новый) — пул событий:
+      - publish_event(type, file_id) — воркер публикует в канал file-events.
+      - stream_event_source() — API подписан и ретранслирует события в SSE + heartbeat-комментарии для удержания соединения.
+    - backend/src/api.py — GET /events (SSE, text/event-stream, Cache-Control: no-cache); publish_event("file_created", ...) после успешного complete_upload.
+    - backend/src/tasks.py — publish_event("file_processed") при завершении обработки (и успех, и сбой — _notify_processed покрывает обе ветки), publish_event("alert_created") после создания алерта.
+  - Фронтенд:
+    - frontend/src/lib/api.ts — subscribeFileEvents(onEvent): обёртка над EventSource, парсит SSE-событие file_event в {type, file_id}, возвращает handle с close().
+    - frontend/src/app/page.tsx — useEffect подписывается на SSE, по каждому событию вызывает loadData() — перезапрос списков файлов/алертов; при размонтировании закрывает соединение.
+  - Тесты:
+    - backend/tests/test_events.py (новый): кодирование SSE-фрейма + полный round-trip pub/sub (скипается, если Redis недоступен локально).
+  - Как это работает: Фронт слушает /events. Когда воркер завершает обработку файла или создаёт алерт, он публикует в Redis; FastAPI получает и рассылает всем открытым SSE-клиентам; браузер перезапрашивает GET /files / GET /alerts — списки всегда консистентны (полные объекты не пересылаются, по схеме «событие → перезапрос»). Второй открытый браузер также обновляется без ручного refresh.
