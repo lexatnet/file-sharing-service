@@ -6,6 +6,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: 'Тестовое задание Fullstack',
     description: 'Тестовое задание Fullstack',
+    icons: {
+      icon: '/favicon.ico',
+    },
   };
 }
 
@@ -16,9 +19,6 @@ export default async function RootLayout({
 }>) {
   return (
     <html lang='ru'>
-      <head>
-        <link rel="icon" href="/public/favicon.ico" sizes="any" />
-      </head>
       <body>
         <Container fluid className='p-0'>
             {children}
