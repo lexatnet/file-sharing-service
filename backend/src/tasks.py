@@ -13,6 +13,7 @@ in progress". Storage is shared via ``src.storage``.
 
 import asyncio
 import logging
+import os
 
 from celery import Celery
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,18 @@ logger = logging.getLogger(__name__)
 
 
 celery_app = Celery("file_tasks", broker=settings.redis_url, backend=settings.redis_url)
+
+# How often the periodic requeue sweeps for files stuck mid-pipeline
+# (e.g. when a worker died and tasks were lost). Tunable via env, so the
+# stack owner can trade between recovery latency and DB churn..
+_requeue_interval_seconds = int(os.environ.get("REQUEUE_INTERVAL_SECONDS", "300"))
+
+celery_app.conf.beat_schedule = {
+    "requeue-incomplete": {
+        "task": "src.tasks.requeue_incomplete_periodic",
+        "schedule": _requeue_interval_seconds,
+    },
+}
 
 
 @celery_app.on_after_configure.connect
@@ -72,6 +85,16 @@ async def requeue_incomplete(session: AsyncSession) -> int:
     if unfinished:
         logger.info("Requeued %d incomplete file processing chain(s)", len(unfinished))
     return len(unfinished)
+
+
+async def _requeue_incomplete_periodic() -> None:
+    async with worker_session_maker() as session:
+        await requeue_incomplete(session)
+
+
+@celery_app.task
+def requeue_incomplete_periodic() -> None:
+    asyncio.run(_requeue_incomplete_periodic())
 
 
 _storage = StorageService(settings.storage_dir)

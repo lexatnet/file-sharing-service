@@ -39,6 +39,20 @@ services:
       - backend-db
       - backend-redis
 
+  backend-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    command: [ 'celery', '-A', 'src.tasks.celery_app', 'beat', '-l', 'info', '--schedule', '/data/celerybeat-schedule' ]
+    container_name: backend-beat
+    env_file: ".env.dev"
+    volumes:
+      - ./backend:/backend
+      - uploaded-files:/data/files
+    depends_on:
+      - backend-db
+      - backend-redis
+
   backend-db:
     image: postgres:latest
     container_name: backend-db
