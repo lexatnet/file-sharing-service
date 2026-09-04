@@ -50,3 +50,39 @@ uv run pytest -q
 **Открыть фронт:** ```http://localhost:3000/test``` 
 
 **Открыть бэк:** ```http://localhost:8000/docs```
+
+---
+
+## История изменений (по коммитам)
+
+- **`97bd291` frontend refactoring** — логика фронтенда разбита на слои:
+  - `src/components/` (таблицы, модалка загрузки, бейджи статусов)
+  -  `src/lib/`(API-клиент fetch, форматирование размеров/дат)
+  -  `src/types.ts` (модели)
+
+- **`2092366` backend refactoring** — рефакторинг бэкенда без слома бизнес-логики:
+  - новая слоистая архитектура:
+    - `api.py` (HTTP) 
+    - `services.py` (оркестрация)
+    - `repositories.py` (доступ к данным)
+    - `config.py`/`db.py` (конфиг/сессиия)
+    - `scanner.py`/`metadata.py`/`storage.py` (бизнес-примитивы)
+    - `tasks.py` (Celery задачи)
+  - **автоинициализация БД при первом запуске**: 
+    - миграции (`alembic upgrade head`) применяются при старте API (lifespan FastAPI) и воркера (`on_after_configure`), через `src/migration.py` (идемпотентно)
+  - **рестарт незавершённых проверок при старте приложения**: файлы, оставшиеся в
+    `uploaded`/`processing` после падения воркера, автоматически возвращаются в
+    конвейер (`requeue_incomplete`: scan для `uploaded`, extract-metadata для `processing`);
+  - добавлены тесты
+  - миграции на ondelete-cascade для `alerts`;
+  - загруженные файлы вынесены из кода на отдельный volume (`uploaded-files` → `/data/files`) (настройка через `STORAGE_DIR` вынесена в конфиг).
+
+
+- **`5bd47a4` Periodic re-checking in case of worker failure/task loss** —
+  периодическая перепроверка незавершённых файлов, независимо от рестартов:
+
+  - Celery **beat** публикует `requeue_incomplete_periodic` по расписанию
+    (по умолчанию раз в 5 минут; регулируется env `REQUEUE_INTERVAL_SECONDS`;
+  - новый сервис **`backend-beat`** в `docker-compose.dev.yml` и `docker-compose.prod.yml`;
+  - `celerybeat-schedule` (SQLite-состояние расписания** вынесен на volume `/data`
+    (вне кода; в `.gitignore` добавлено правило `celerybeat-schedule*`.`
