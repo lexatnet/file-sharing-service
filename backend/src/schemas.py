@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FileItem(BaseModel):
@@ -21,7 +21,7 @@ class FileItem(BaseModel):
 
 
 class FileUpdate(BaseModel):
-    title: str
+    title: str = Field(min_length=1, max_length=255)
 
 
 class AlertItem(BaseModel):

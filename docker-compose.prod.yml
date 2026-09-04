@@ -1,18 +1,6 @@
-# Local dev overlay: like docker-compose.dev.yml, but backend/worker are built
-# from Dockerfile.dev, which bakes in the dev/test group (pytest и др.) — so
-# testing in-container works without ad-hoc installs. Source stays mounted from
-# the host (./backend:/backend), so code edits are picked up live (uvicorn --reload).
-
-# No container_name:, so this stack's containers get project-scoped names and can
-# coexist with the default dev stack.
-
-name: fullstack-dev-local
-
 services:
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.dev
+    build: ./backend
     command: uvicorn src.main:app --host 0.0.0.0 --reload --port 8000
     container_name: backend
     volumes:
@@ -23,12 +11,12 @@ services:
       - "8000:8000"
     depends_on:
       - backend-db
+      # The API publishes the scan task to the Redis broker on every upload
+      # (scan_file_for_threats.delay), so Redis must be up before the API.
       - backend-redis
 
   backend-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.dev
+    build: ./backend
     command: [ 'celery', '-A', 'src.tasks.celery_app', 'worker', '-l', 'info' ]
     container_name: backend-worker
     env_file: ".env.dev"
@@ -42,6 +30,7 @@ services:
   backend-db:
     image: postgres:latest
     container_name: backend-db
+    # Postgres listens on 5432 inside the container; expose it on host 5433.
     ports:
       - "5433:5432"
     env_file: ".env.dev"

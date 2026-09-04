@@ -1,0 +1,17 @@
+# Dev image: prod base + the dev/test group (pytest и др.) pre-installed.
+# Source is NOT copied — compose bind-mounts ./backend:/backend so code edits
+# are live-watched by uvicorn --reload and pytest runs against the mounted files.
+
+FROM python:3.14-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_PROJECT_ENVIRONMENT=/usr/local
+WORKDIR /backend
+
+COPY pyproject.toml uv.lock ./
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+# --no-default-groups would drop the implicit dev-group; we WANT it, so sync
+# the whole lockfile (incl. [dependency-groups] dev) into /usr/local.
+
+RUN uv sync --locked --group dev
