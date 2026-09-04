@@ -13,11 +13,7 @@
 **Запуск:**
    
 ```bash
-docker compose -f docker-compose.dev.yml up
-```
-
-```bash
-docker compose -f docker-compose.dev.yml exec -it backend alembic upgrade head
+docker compose --file docker-compose.dev.yml --env-file ./.env.dev up
 ```
 
 **Запуск тестов бэкенда:**
@@ -86,3 +82,12 @@ uv run pytest -q
   - новый сервис **`backend-beat`** в `docker-compose.dev.yml` и `docker-compose.prod.yml`;
   - `celerybeat-schedule` (SQLite-состояние расписания** вынесен на volume `/data`
     (вне кода; в `.gitignore` добавлено правило `celerybeat-schedule*`.`
+  
+- **`777cb1d` new file upload/downlod with s3** —
+  - Бэкенд: S3StorageService (boto3: create_multipart_upload → presign-URL → complete/abort/list_parts)
+  - колонка upload_id в БД + миграция, 
+  - 5 новых эндпоинтов: (/files/uploads, …/presign, …/complete, …/abort, GET …/{id}для resume)
+  - скачивание — стрим из S3.
+  - Воркер: metadata-extraction качает объект из S3 во временный файл.
+  - Фронтенд: чанкованная загрузка по presigned-URL с прогрессом, «Отмена» (AbortController), возобновление прерванной из localStorage (с пропуском уже залитых частей)。
+  - Compose: depends_on: s3 у backend/worker/beat, убраны старые volume uploaded-files
