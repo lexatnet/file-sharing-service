@@ -85,9 +85,16 @@ uv run pytest -q
   
 - **`777cb1d` new file upload/downlod with s3** —
   - Бэкенд: S3StorageService (boto3: create_multipart_upload → presign-URL → complete/abort/list_parts)
-  - колонка upload_id в БД + миграция, 
+  - колонка upload_id в БД + миграция
   - 5 новых эндпоинтов: (/files/uploads, …/presign, …/complete, …/abort, GET …/{id}для resume)
   - скачивание — стрим из S3.
   - Воркер: metadata-extraction качает объект из S3 во временный файл.
-  - Фронтенд: чанкованная загрузка по presigned-URL с прогрессом, «Отмена» (AbortController), возобновление прерванной из localStorage (с пропуском уже залитых частей)。
+  - Фронтенд: чанкованная загрузка по presigned-URL с прогрессом, «Отмена» (AbortController), возобновление прерванной из localStorage (с пропуском уже залитых частей).
   - Compose: depends_on: s3 у backend/worker/beat, убраны старые volume uploaded-files
+- **`e87baf1` Refactoring** —
+  - Мёртвый AlertRepository.create — удалён из repositories.py (воркер и так ходит напрямую через session.add).
+  - Дублированная валидация title — вынесен общий хелпер _validate_title() в services.py; используется в initiate_upload и update_file..
+  - body["Body"] — в storage.py введён типизированный @dataclass S3Object (.stream), метод iter_object переименован в open_stream; api.py пишет body stream вместо магической строки.
+  - Import внутри функции — from urllib.parse import quote перенесён наверх модуля.
+  - upload_all_parts — вынесен из двух тестовых файлов в общий tests/conftest.py.
+  - Потеря причины S3-ошибки при complete — services.complete_upload теперь пробрасывает Code (detail …Could not complete…: ENTITY_TOO_SMALL и т.п.
